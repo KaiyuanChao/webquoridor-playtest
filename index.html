@@ -1229,6 +1229,34 @@
       },
     };
 
+    const GFX3D_PAWN_SEGMENTS = 32;
+    const GFX3D_WALL_TOP_FACETS = 9;
+
+    function gfx3dPushVertex(vertices, p, n) {
+      const normal = gfx3dNormalize(n);
+      vertices.push(p[0], p[1], p[2], normal[0], normal[1], normal[2]);
+    }
+
+    function gfx3dSub(a, b) {
+      return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    }
+
+    function gfx3dFaceNormal(a, b, c) {
+      return gfx3dNormalize(gfx3dCross(gfx3dSub(b, a), gfx3dSub(c, a)));
+    }
+
+    function gfx3dAddTri(vertices, a, b, c, na = null, nb = null, nc = null) {
+      const face = na ? null : gfx3dFaceNormal(a, b, c);
+      gfx3dPushVertex(vertices, a, na || face);
+      gfx3dPushVertex(vertices, b, nb || face);
+      gfx3dPushVertex(vertices, c, nc || face);
+    }
+
+    function gfx3dAddQuad(vertices, a, b, c, d, na = null, nb = null, nc = null, nd = null) {
+      gfx3dAddTri(vertices, a, b, c, na, nb, nc);
+      gfx3dAddTri(vertices, a, c, d, na, nc, nd);
+    }
+
     function gfx3dCubeVertices() {
       const vertices = [];
       const faces = [
@@ -1240,12 +1268,124 @@
         { n: [0, 0, -1], p: [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]] },
       ];
       for (const face of faces) {
-        for (const i of [0, 1, 2, 0, 2, 3]) vertices.push(...face.p[i], ...face.n);
+        gfx3dAddQuad(vertices, face.p[0], face.p[1], face.p[2], face.p[3], face.n, face.n, face.n, face.n);
       }
-      return new Float32Array(vertices);
+      return vertices;
     }
 
-    const GFX3D_CUBE_VERTICES = gfx3dCubeVertices();
+    function gfx3dSquirclePoint(i, segments = GFX3D_PAWN_SEGMENTS, scale = 1) {
+      const theta = (i / segments) * Math.PI * 2;
+      const c = Math.cos(theta);
+      const s = Math.sin(theta);
+      const squirclePower = 0.54;
+      return [
+        Math.sign(c) * Math.pow(Math.abs(c), squirclePower) * scale,
+        Math.sign(s) * Math.pow(Math.abs(s), squirclePower) * scale,
+      ];
+    }
+
+    function gfx3dSquircleNormal(x, z, y = 0) {
+      return gfx3dNormalize([x * 1.22, y, z * 1.22]);
+    }
+
+    function gfx3dSquirclePawnVertices() {
+      const vertices = [];
+      const rings = [
+        { y: -1.00, scale: 0.82, ny: -0.15 },
+        { y: -0.78, scale: 1.00, ny: 0.00 },
+        { y: 0.72, scale: 1.00, ny: 0.00 },
+        { y: 0.95, scale: 0.86, ny: 0.48 },
+      ];
+      const ringPoints = rings.map(r => Array.from({ length: GFX3D_PAWN_SEGMENTS }, (_, i) => {
+        const [x, z] = gfx3dSquirclePoint(i, GFX3D_PAWN_SEGMENTS, r.scale);
+        return { p: [x, r.y, z], n: gfx3dSquircleNormal(x, z, r.ny) };
+      }));
+
+      for (let ri = 0; ri < ringPoints.length - 1; ri++) {
+        for (let i = 0; i < GFX3D_PAWN_SEGMENTS; i++) {
+          const j = (i + 1) % GFX3D_PAWN_SEGMENTS;
+          const a = ringPoints[ri][i], b = ringPoints[ri + 1][i], c = ringPoints[ri + 1][j], d = ringPoints[ri][j];
+          gfx3dAddQuad(vertices, a.p, b.p, c.p, d.p, a.n, b.n, c.n, d.n);
+        }
+      }
+
+      const topCenter = [0, 1, 0];
+      const topRing = ringPoints[ringPoints.length - 1];
+      for (let i = 0; i < GFX3D_PAWN_SEGMENTS; i++) {
+        const j = (i + 1) % GFX3D_PAWN_SEGMENTS;
+        gfx3dAddTri(vertices, topCenter, topRing[i].p, topRing[j].p, [0, 1, 0], [0, 1, 0], [0, 1, 0]);
+      }
+
+      const bottomCenter = [0, -1, 0];
+      const bottomRing = ringPoints[0];
+      for (let i = 0; i < GFX3D_PAWN_SEGMENTS; i++) {
+        const j = (i + 1) % GFX3D_PAWN_SEGMENTS;
+        gfx3dAddTri(vertices, bottomCenter, bottomRing[j].p, bottomRing[i].p, [0, -1, 0], [0, -1, 0], [0, -1, 0]);
+      }
+      return vertices;
+    }
+
+    function gfx3dTargetSquircleVertices() {
+      const vertices = [];
+      const outer = [];
+      const inner = [];
+      for (let i = 0; i < GFX3D_PAWN_SEGMENTS; i++) {
+        const [ox, oz] = gfx3dSquirclePoint(i, GFX3D_PAWN_SEGMENTS, 1.0);
+        const [ix, iz] = gfx3dSquirclePoint(i, GFX3D_PAWN_SEGMENTS, 0.58);
+        outer.push([ox, 0, oz]);
+        inner.push([ix, 0, iz]);
+      }
+      for (let i = 0; i < GFX3D_PAWN_SEGMENTS; i++) {
+        const j = (i + 1) % GFX3D_PAWN_SEGMENTS;
+        gfx3dAddQuad(vertices, outer[i], outer[j], inner[j], inner[i], [0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]);
+      }
+      return vertices;
+    }
+
+    function gfx3dGemWallVertices(axis = "x") {
+      const vertices = [];
+      const orient = axis === "z"
+        ? (u, y, v) => [v, y, u]
+        : (u, y, v) => [u, y, v];
+      const addQuad = (a, b, c, d) => gfx3dAddQuad(vertices, orient(...a), orient(...b), orient(...c), orient(...d));
+
+      addQuad([-1, -1, -1], [1, -1, -1], [1, 0.52, -1], [-1, 0.52, -1]);
+      addQuad([1, -1, 1], [-1, -1, 1], [-1, 0.52, 1], [1, 0.52, 1]);
+      addQuad([-1, -1, 1], [-1, -1, -1], [-1, 0.52, -1], [-1, 0.52, 1]);
+      addQuad([1, -1, -1], [1, -1, 1], [1, 0.52, 1], [1, 0.52, -1]);
+      addQuad([-1, -1, 1], [1, -1, 1], [1, -1, -1], [-1, -1, -1]);
+
+      addQuad([-1, 0.52, -1], [1, 0.52, -1], [1, 0.78, -0.62], [-1, 0.78, -0.62]);
+      addQuad([1, 0.52, 1], [-1, 0.52, 1], [-1, 0.78, 0.62], [1, 0.78, 0.62]);
+
+      const ridgeY = i => 0.98 + (i % 2 === 0 ? 0.035 : -0.025);
+      for (let i = 0; i < GFX3D_WALL_TOP_FACETS; i++) {
+        const u0 = -1 + (2 * i) / GFX3D_WALL_TOP_FACETS;
+        const u1 = -1 + (2 * (i + 1)) / GFX3D_WALL_TOP_FACETS;
+        const y0 = ridgeY(i);
+        const y1 = ridgeY(i + 1);
+        addQuad([u0, 0.78, -0.62], [u1, 0.78, -0.62], [u1, y1, 0], [u0, y0, 0]);
+        addQuad([u0, y0, 0], [u1, y1, 0], [u1, 0.78, 0.62], [u0, 0.78, 0.62]);
+      }
+      return vertices;
+    }
+
+    function gfx3dMeshAtlas() {
+      const ranges = {};
+      const vertices = [];
+      const add = (name, mesh) => {
+        ranges[name] = { first: vertices.length / 6, count: mesh.length / 6 };
+        vertices.push(...mesh);
+      };
+      add("cube", gfx3dCubeVertices());
+      add("pawn", gfx3dSquirclePawnVertices());
+      add("target", gfx3dTargetSquircleVertices());
+      add("wallH", gfx3dGemWallVertices("x"));
+      add("wallV", gfx3dGemWallVertices("z"));
+      return { vertices: new Float32Array(vertices), ranges };
+    }
+
+    const GFX3D_MESHES = gfx3dMeshAtlas();
 
     function gfx3dColor(hex, alpha = 1) {
       const rgb = hexToRgb(hex || "#ffffff");
@@ -1254,9 +1394,33 @@
 
     function gfx3dWallColor(owner) {
       if (owner >= 0) {
-        return gfx3dColor(mixHex(PLAYER_COLORS[owner][0], "#fff1c7", 0.38), 0.58);
+        return gfx3dColor(mixHex(PLAYER_COLORS[owner][0], "#fff6dc", 0.55), 0.62);
       }
-      return gfx3dColor("#e7dbc0", 0.54);
+      return gfx3dColor("#f3e7c9", 0.60);
+    }
+
+    function legalMoveHintStyle() {
+      const enemy = !isHumanTurn();
+      if (enemy) {
+        return {
+          enemy,
+          fill2d: "rgba(0,0,0,0)",
+          stroke2d: "rgba(176,184,192,0.82)",
+          shadow2d: "rgba(196,204,214,0.24)",
+          color3d: [0.62, 0.66, 0.70, 0.84],
+          material3d: [0.68, 72, 0.22, 0.22],
+          mesh3d: "target",
+        };
+      }
+      return {
+        enemy,
+        fill2d: "rgba(121, 212, 148, 0.34)",
+        stroke2d: "rgba(121, 212, 148, 0)",
+        shadow2d: "rgba(121, 212, 148, 0.18)",
+        color3d: [0.36, 0.86, 0.55, 1],
+        material3d: [0.22, 32, 0.08, 0.02],
+        mesh3d: "cube",
+      };
     }
 
     function gfx3dNormalize(v) {
@@ -1385,6 +1549,7 @@
 struct Uniforms {
   viewProj: mat4x4<f32>,
   lightDir: vec4<f32>,
+  eyePos: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> uni: Uniforms;
 
@@ -1394,6 +1559,7 @@ struct VertexIn {
   @location(2) center: vec3<f32>,
   @location(3) halfSize: vec3<f32>,
   @location(4) color: vec4<f32>,
+  @location(5) material: vec4<f32>,
 };
 
 struct VertexOut {
@@ -1401,6 +1567,7 @@ struct VertexOut {
   @location(0) normal: vec3<f32>,
   @location(1) color: vec4<f32>,
   @location(2) world: vec3<f32>,
+  @location(3) material: vec4<f32>,
 };
 
 @vertex
@@ -1411,25 +1578,46 @@ fn vs_main(input: VertexIn) -> VertexOut {
   out.normal = normalize(input.normal);
   out.color = input.color;
   out.world = world;
+  out.material = input.material;
   return out;
 }
 
 @fragment
 fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-  let light = max(dot(normalize(input.normal), normalize(-uni.lightDir.xyz)), 0.0);
+  let normal = normalize(input.normal);
+  let lightDir = normalize(-uni.lightDir.xyz);
+  let fillDir = normalize(vec3<f32>(0.82, 0.44, 0.36));
+  let rimDir = normalize(vec3<f32>(-0.38, 0.52, -0.76));
+  let viewDir = normalize(uni.eyePos.xyz - input.world);
+  let halfDir = normalize(lightDir + viewDir);
+  let fillHalf = normalize(fillDir + viewDir);
+  let rimHalf = normalize(rimDir + viewDir);
+  let light = max(dot(normal, lightDir), 0.0);
+  let fillLight = max(dot(normal, fillDir), 0.0);
+  let rimLight = max(dot(normal, rimDir), 0.0);
+  let specular = (
+    pow(max(dot(normal, halfDir), 0.0), input.material.y) +
+    pow(max(dot(normal, fillHalf), 0.0), max(8.0, input.material.y * 0.72)) * 0.55 +
+    pow(max(dot(normal, rimHalf), 0.0), max(6.0, input.material.y * 0.50)) * 0.35
+  ) * input.material.x;
+  let rim = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 2.0) * input.material.z + pow(rimLight, 2.0) * input.material.z * 0.42;
+  let gemGlisten =
+    pow(max(dot(normal, halfDir), 0.0), max(6.0, input.material.y * 0.38)) * input.material.w +
+    pow(max(dot(normal, fillHalf), 0.0), max(5.0, input.material.y * 0.28)) * input.material.w * 0.45;
   let lift = clamp(input.world.y * 0.08, 0.0, 0.08);
-  let shade = 0.34 + light * 0.66 + lift;
-  return vec4<f32>(input.color.rgb * shade, input.color.a);
+  let shade = 0.34 + light * 0.56 + fillLight * 0.22 + rimLight * 0.12 + lift;
+  let highlight = vec3<f32>(1.0, 0.94, 0.76) * (specular + gemGlisten) + vec3<f32>(0.62, 0.84, 1.0) * rim;
+  return vec4<f32>(min(input.color.rgb * shade + highlight, vec3<f32>(1.0, 1.0, 1.0)), input.color.a);
 }
 ` });
 
           this.buffers.vertex = this.device.createBuffer({
-            size: GFX3D_CUBE_VERTICES.byteLength,
+            size: GFX3D_MESHES.vertices.byteLength,
             usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
           });
-          this.device.queue.writeBuffer(this.buffers.vertex, 0, GFX3D_CUBE_VERTICES);
+          this.device.queue.writeBuffer(this.buffers.vertex, 0, GFX3D_MESHES.vertices);
           this.buffers.uniform = this.device.createBuffer({
-            size: 80,
+            size: 96,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
           });
           this.bindGroups.layout = this.device.createBindGroupLayout({
@@ -1480,12 +1668,13 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
                 ],
               },
               {
-                arrayStride: 48,
+                arrayStride: 64,
                 stepMode: "instance",
                 attributes: [
                   { shaderLocation: 2, offset: 0, format: "float32x3" },
                   { shaderLocation: 3, offset: 16, format: "float32x3" },
                   { shaderLocation: 4, offset: 32, format: "float32x4" },
+                  { shaderLocation: 5, offset: 48, format: "float32x4" },
                 ],
               },
             ],
@@ -1536,12 +1725,32 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
         }).createView();
       },
       ensureInstanceData(instanceCount) {
-        const floats = Math.max(12, instanceCount * 12);
+        const floats = Math.max(16, instanceCount * 16);
         if (!this.instanceData || this.instanceCapacity < floats) {
           this.instanceCapacity = Math.max(floats, this.instanceCapacity * 2 || 1024);
           this.instanceData = new Float32Array(this.instanceCapacity);
         }
         return this.instanceData;
+      },
+      groupInstances(instances) {
+        const groups = [];
+        const byMesh = new Map();
+        for (const item of instances) {
+          const mesh = item.mesh || "cube";
+          let group = byMesh.get(mesh);
+          if (!group) {
+            group = { mesh, instances: [], firstInstance: 0 };
+            byMesh.set(mesh, group);
+            groups.push(group);
+          }
+          group.instances.push(item);
+        }
+        let first = 0;
+        for (const group of groups) {
+          group.firstInstance = first;
+          first += group.instances.length;
+        }
+        return groups;
       },
       requestRender() {
         if (!app.view3d || !this.ready || this.framePending) return;
@@ -1557,23 +1766,31 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
         this.resize();
         const instances = this.buildInstances();
         if (!instances.length) return;
-        const instanceFloats = instances.length * 12;
+        const groups = this.groupInstances(instances);
+        const instanceFloats = instances.length * 16;
         const data = this.ensureInstanceData(instances.length);
-        instances.forEach((item, i) => {
-          const o = i * 12;
-          data[o + 0] = item.center[0];
-          data[o + 1] = item.center[1];
-          data[o + 2] = item.center[2];
-          data[o + 3] = 0;
-          data[o + 4] = item.half[0];
-          data[o + 5] = item.half[1];
-          data[o + 6] = item.half[2];
-          data[o + 7] = 0;
-          data[o + 8] = item.color[0];
-          data[o + 9] = item.color[1];
-          data[o + 10] = item.color[2];
-          data[o + 11] = item.color[3];
-        });
+        for (const group of groups) {
+          group.instances.forEach((item, i) => {
+            const o = (group.firstInstance + i) * 16;
+            const material = item.material || [0.16, 22, 0.02, 0.0];
+            data[o + 0] = item.center[0];
+            data[o + 1] = item.center[1];
+            data[o + 2] = item.center[2];
+            data[o + 3] = 0;
+            data[o + 4] = item.half[0];
+            data[o + 5] = item.half[1];
+            data[o + 6] = item.half[2];
+            data[o + 7] = 0;
+            data[o + 8] = item.color[0];
+            data[o + 9] = item.color[1];
+            data[o + 10] = item.color[2];
+            data[o + 11] = item.color[3];
+            data[o + 12] = material[0];
+            data[o + 13] = material[1];
+            data[o + 14] = material[2];
+            data[o + 15] = material[3];
+          });
+        }
         if (!this.buffers.instance || this.buffers.instanceSize < data.byteLength) {
           this.buffers.instance?.destroy?.();
           this.buffers.instanceSize = Math.max(data.byteLength, 4096);
@@ -1606,7 +1823,10 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
         pass.setBindGroup(0, this.bindGroups.uniform);
         pass.setVertexBuffer(0, this.buffers.vertex);
         pass.setVertexBuffer(1, this.buffers.instance);
-        pass.draw(36, instances.length);
+        for (const group of groups) {
+          const range = GFX3D_MESHES.ranges[group.mesh] || GFX3D_MESHES.ranges.cube;
+          pass.draw(range.count, group.instances.length, range.first, group.firstInstance);
+        }
         pass.end();
         this.device.queue.submit([encoder.finish()]);
         if (this.dprRecoveryPending) this.requestRender();
@@ -1618,9 +1838,10 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
         const eye = gfx3dCameraEye();
         const view = gfx3dLookAt(eye, [0, 0, 0], [0, 1, 0]);
         const viewProj = gfx3dMultiply(proj, view);
-        const out = new Float32Array(20);
+        const out = new Float32Array(24);
         out.set(viewProj, 0);
         out.set([-0.45, -0.82, -0.35, 0], 16);
+        out.set([eye[0], eye[1], eye[2], 0], 20);
         return out;
       },
       buildInstances() {
@@ -1635,12 +1856,16 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
         const grooveHex = mixHex(baseHex, "#7a4a23", 0.28);
         const cellA = cssVar("--cell-a") || "#e5c985";
         const cellB = cssVar("--cell-b") || "#c99550";
+        const boardMaterial = [0.10, 18, 0.015, 0.0];
+        const tileMaterial = [0.18, 24, 0.018, 0.0];
+        const wallMaterial = [1.05, 96, 0.30, 0.72];
+        const pawnMaterial = [0.82, 76, 0.28, 0.38];
         // Low shadow/table layer gives the board a visible dark side face.
-        instances.push({ center: [0, -0.36, 0], half: [n * 0.67, 0.18, n * 0.67], color: gfx3dColor(mixHex(tableHex, "#000000", 0.2)) });
+        instances.push({ center: [0, -0.36, 0], half: [n * 0.67, 0.18, n * 0.67], color: gfx3dColor(mixHex(tableHex, "#000000", 0.2)), material: boardMaterial });
         // Walnut board slab/rim: the darker board under the light inlaid play field.
-        instances.push({ center: [0, -0.18, 0], half: [n * 0.6, 0.1, n * 0.6], color: gfx3dColor(rimHex) });
+        instances.push({ center: [0, -0.18, 0], half: [n * 0.6, 0.1, n * 0.6], color: gfx3dColor(rimHex), material: boardMaterial });
         // Recessed groove bed remains visible between the raised square tiles.
-        instances.push({ center: [0, -0.055, 0], half: [n * 0.515, 0.045, n * 0.515], color: gfx3dColor(grooveHex) });
+        instances.push({ center: [0, -0.055, 0], half: [n * 0.515, 0.045, n * 0.515], color: gfx3dColor(grooveHex), material: boardMaterial });
         for (let r = 0; r < n; r++) {
           for (let c = 0; c < n; c++) {
             const t = n <= 1 ? 0 : (r + c) / (2 * (n - 1));
@@ -1649,14 +1874,18 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
               center: [c - mid, 0, r - mid],
               half: [0.39, 0.07, 0.39],
               color: gfx3dColor(tileHex),
+              material: tileMaterial,
             });
           }
         }
+        const hint = legalMoveHintStyle();
         for (const mv of app.legalPawns || []) {
           instances.push({
-            center: [mv.c - mid, 0.095, mv.r - mid],
-            half: [0.24, 0.025, 0.24],
-            color: [0.36, 0.86, 0.55, 1],
+            mesh: hint.mesh3d,
+            center: [mv.c - mid, hint.enemy ? 0.108 : 0.095, mv.r - mid],
+            half: hint.enemy ? [0.25, 0.018, 0.25] : [0.24, 0.025, 0.24],
+            color: hint.color3d,
+            material: hint.material3d,
           });
         }
         const wallHalfLong = single ? 0.39 : 0.88;
@@ -1665,7 +1894,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
             if (!s.h[r][c]) continue;
             const owner = s.hOwner?.[r]?.[c] ?? -1;
             const color = gfx3dWallColor(owner);
-            instances.push({ center: [c + (single ? 0 : 0.5) - mid, 0.32, r + 0.5 - mid], half: [wallHalfLong, 0.23, 0.07], color });
+            instances.push({ mesh: "wallH", center: [c + (single ? 0 : 0.5) - mid, 0.32, r + 0.5 - mid], half: [wallHalfLong, 0.23, 0.07], color, material: wallMaterial });
           }
         }
         for (let r = 0; r < s.v.length; r++) {
@@ -1673,14 +1902,16 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
             if (!s.v[r][c]) continue;
             const owner = s.vOwner?.[r]?.[c] ?? -1;
             const color = gfx3dWallColor(owner);
-            instances.push({ center: [c + 0.5 - mid, 0.32, r + (single ? 0 : 0.5) - mid], half: [0.07, 0.23, wallHalfLong], color });
+            instances.push({ mesh: "wallV", center: [c + 0.5 - mid, 0.32, r + (single ? 0 : 0.5) - mid], half: [0.07, 0.23, wallHalfLong], color, material: wallMaterial });
           }
         }
         s.pawns.forEach((p, i) => {
           instances.push({
+            mesh: "pawn",
             center: [p.c - mid, 0.43, p.r - mid],
             half: [0.24, 0.43, 0.24],
             color: gfx3dColor(PLAYER_COLORS[i]?.[0] || "#ffffff"),
+            material: pawnMaterial,
           });
         });
         return instances;
@@ -4068,15 +4299,28 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
 
     function drawHighlights() {
       const m = boardMetrics();
+      const hint = legalMoveHintStyle();
       ctx.save();
       ctx.translate(m.x, m.y);
       for (const mv of app.legalPawns) {
         const x = mv.c * m.cell + m.cell * 0.5;
         const y = mv.r * m.cell + m.cell * 0.5;
-        ctx.fillStyle = "rgba(121, 212, 148, 0.34)";
-        ctx.beginPath();
-        ctx.arc(x, y, m.cell * 0.17, 0, Math.PI * 2);
-        ctx.fill();
+        if (hint.enemy) {
+          const size = m.cell * 0.35;
+          ctx.save();
+          ctx.shadowColor = hint.shadow2d;
+          ctx.shadowBlur = m.cell * 0.08;
+          ctx.strokeStyle = hint.stroke2d;
+          ctx.lineWidth = Math.max(2, m.cell * 0.035);
+          roundRect(x - size * 0.5, y - size * 0.5, size, size, size * 0.34);
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          ctx.fillStyle = hint.fill2d;
+          ctx.beginPath();
+          ctx.arc(x, y, m.cell * 0.17, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
       if (app.hover?.kind === "cell") {
         const legalHover = isHumanTurn() && app.legalPawns.some(mv => mv.r === app.hover.r && mv.c === app.hover.c);
@@ -4132,14 +4376,14 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
       const grad = ctx.createLinearGradient(x, y, x + w, y + h);
       if (material === "steel") {
         grad.addColorStop(0, "#ffffff");
-        grad.addColorStop(0.22, mixHex(ownerColor, "#aeb8c2", 0.72));
-        grad.addColorStop(0.56, mixHex(ownerColor, "#59636d", 0.82));
-        grad.addColorStop(1, "#e7edf4");
+        grad.addColorStop(0.22, mixHex(ownerColor, "#d7e0e9", 0.78));
+        grad.addColorStop(0.56, mixHex(ownerColor, "#7f8b96", 0.78));
+        grad.addColorStop(1, "#f7fbff");
       } else if (material === "gold") {
-        grad.addColorStop(0, "#fff2bd");
-        grad.addColorStop(0.28, mixHex(ownerColor, "#d7a744", 0.7));
-        grad.addColorStop(0.62, mixHex(ownerColor, "#785113", 0.82));
-        grad.addColorStop(1, "#ffe08a");
+        grad.addColorStop(0, "#fff7cf");
+        grad.addColorStop(0.28, mixHex(ownerColor, "#edc866", 0.72));
+        grad.addColorStop(0.62, mixHex(ownerColor, "#a97926", 0.76));
+        grad.addColorStop(1, "#fff0a8");
       } else {
         grad.addColorStop(0, "rgba(255,255,255,.98)");
         grad.addColorStop(0.24, mixHex(ownerColor, "#ffffff", 0.78));
@@ -4162,6 +4406,25 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
       ctx.strokeStyle = material === "crystal" ? "rgba(255,255,255,.68)" : "rgba(255,255,255,.18)";
       ctx.lineWidth = Math.max(1, thick * 0.08);
       ctx.stroke();
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = alpha * (material === "crystal" ? 0.62 : 0.42);
+      ctx.strokeStyle = "rgba(255,255,255,.82)";
+      ctx.lineWidth = Math.max(1, thick * 0.11);
+      ctx.beginPath();
+      ctx.moveTo(x + w * 0.16, y + h * 0.20);
+      ctx.lineTo(x + w * 0.44, y + h * 0.38);
+      ctx.moveTo(x + w * 0.62, y + h * 0.22);
+      ctx.lineTo(x + w * 0.82, y + h * 0.36);
+      ctx.stroke();
+      ctx.globalAlpha = alpha * 0.28;
+      ctx.strokeStyle = "rgba(179,224,255,.62)";
+      ctx.lineWidth = Math.max(1, thick * 0.07);
+      ctx.beginPath();
+      ctx.moveTo(x + w * 0.22, y + h * 0.76);
+      ctx.lineTo(x + w * 0.74, y + h * 0.58);
+      ctx.stroke();
+      ctx.restore();
       ctx.globalAlpha = 1;
     }
 
@@ -4206,6 +4469,19 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
       ctx.strokeStyle = "rgba(255,255,255,.3)";
       ctx.lineWidth = Math.max(1, r * 0.08);
       ctx.stroke();
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = material === "gloss" ? 0.82 : 0.62;
+      ctx.fillStyle = "rgba(255,255,255,.78)";
+      ctx.beginPath();
+      ctx.ellipse(x - r * 0.25, y - r * 0.31, r * 0.17, r * 0.075, -0.55, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(220,245,255,.52)";
+      ctx.lineWidth = Math.max(1, r * 0.055);
+      ctx.beginPath();
+      ctx.arc(x + r * 0.08, y - r * 0.08, r * 0.48, -1.08, -0.34);
+      ctx.stroke();
+      ctx.restore();
     }
 
     function drawLighting() {
